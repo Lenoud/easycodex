@@ -70,6 +70,7 @@ function loadEnvFile(filePath) {
 
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const codexEntry = path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+const codexBin = (process.env.CODEX_BIN || "").trim();
 const claudeBin = process.env.CLAUDE_BIN || "claude";
 const claudeProjectsRoot = path.join(os.homedir(), ".claude", "projects");
 const uiPort = Number(process.env.PHONE_UI_PORT || 45214);
@@ -593,7 +594,9 @@ class AppServerRpcClient {
 const appServerClient = new AppServerRpcClient();
 
 function startCodexServer() {
-  const child = spawn(process.execPath, [codexEntry, "app-server", "--listen", codexUrl], {
+  const command = codexBin || process.execPath;
+  const args = codexBin ? ["app-server", "--listen", codexUrl] : [codexEntry, "app-server", "--listen", codexUrl];
+  const child = spawn(command, args, {
     cwd: root,
     env: {
       ...process.env,
