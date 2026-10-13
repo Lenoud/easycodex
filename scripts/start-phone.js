@@ -2093,7 +2093,7 @@ async function main() {
       }
       try {
         const result = await appServerRequest("thread/list", {
-          limit: 30,
+          limit: 200,
           sortKey: "updated_at",
           sortDirection: "desc",
           archived: false,

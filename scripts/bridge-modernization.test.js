@@ -32,6 +32,7 @@ test("Codex bridge leaves the default model to the current app-server config", (
 
   assert.doesNotMatch(server, /isClaudeProvider \? "sonnet" : "gpt-5\.4"/);
   assert.doesNotMatch(server, /\["gpt-5\.5", "gpt-5\.4", "gpt-5\.3-codex"/);
+  assert.doesNotMatch(server, /thread\/list", \{\s*limit: 30,/);
 });
 
 test("web client is Simplified Chinese and builds its Codex model choices dynamically", () => {
