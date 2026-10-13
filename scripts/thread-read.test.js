@@ -49,8 +49,6 @@ test("readThreadSnapshot does not call app-server for a live bridge thread", asy
       calls += 1;
       throw new Error("should not call app-server");
     },
-    model: "gpt-5.4",
-    workdir: "/tmp/user-project",
     historyFromThread: () => [],
   });
 
@@ -74,8 +72,6 @@ test("readThreadSnapshot does not call app-server while an existing bridge is st
       calls += 1;
       throw new Error("should not call app-server while bridge is starting");
     },
-    model: "gpt-5.4",
-    workdir: "/tmp/user-project",
     historyFromThread: () => [],
   });
 
@@ -85,77 +81,62 @@ test("readThreadSnapshot does not call app-server while an existing bridge is st
   assert.deepEqual(snapshot.history, []);
 });
 
-test("readThreadSnapshot falls back when a matching bridge failed to resume", async () => {
+test("readThreadSnapshot reports a failed bridge read without resuming", async () => {
   const calls = [];
-  const snapshot = await readThreadSnapshot({
-    threadId: "thread-123",
-    liveBridge: {
-      ready: false,
-      startupFailed: true,
-      requestedThreadId: "thread-123",
-      threadId: null,
-      history: [],
-    },
-    request: async (method, params) => {
-      calls.push({ method, params });
-      if (method === "thread/read") throw new Error("stale cache");
-      return { thread: { id: "thread-123", turns: [] } };
-    },
-    model: "gpt-5.4",
-    workdir: "/tmp/user-project",
-    historyFromThread: () => [{ type: "status", text: "resumed" }],
-  });
 
-  assert.deepEqual(calls.map((call) => call.method), ["thread/read", "thread/resume"]);
-  assert.equal(snapshot.source, "app-server");
-  assert.deepEqual(snapshot.history, [{ type: "status", text: "resumed" }]);
+  await assert.rejects(
+    () =>
+      readThreadSnapshot({
+        threadId: "thread-123",
+        liveBridge: { ready: false, startupFailed: true, requestedThreadId: "thread-123", threadId: null, history: [] },
+        request: async (method) => {
+          calls.push(method);
+          throw new Error("stale cache");
+        },
+        historyFromThread: () => [],
+      }),
+    /stale cache/,
+  );
+
+  assert.deepEqual(calls, ["thread/read"]);
 });
 
-test("readThreadSnapshot falls back from thread/read to thread/resume for non-live threads", async () => {
+test("readThreadSnapshot never resumes a non-live thread while reading history", async () => {
   const calls = [];
-  const snapshot = await readThreadSnapshot({
-    threadId: "thread-456",
-    liveBridge: null,
-    request: async (method, params) => {
-      calls.push({ method, params });
-      if (method === "thread/read") throw new Error("no rollout found");
-      return { thread: { id: "thread-456", items: [] } };
-    },
-    model: "gpt-5.4",
-    workdir: "/tmp/user-project",
-    historyFromThread: () => [{ type: "status", text: "loaded" }],
-  });
 
-  assert.deepEqual(calls.map((call) => call.method), ["thread/read", "thread/resume"]);
-  assert.equal(calls[1].params.cwd, "/tmp/user-project");
-  assert.equal(snapshot.source, "app-server");
-  assert.deepEqual(snapshot.history, [{ type: "status", text: "loaded" }]);
+  await assert.rejects(
+    () =>
+      readThreadSnapshot({
+        threadId: "thread-456",
+        liveBridge: null,
+        request: async (method) => {
+          calls.push(method);
+          throw new Error("no rollout found");
+        },
+        historyFromThread: () => [],
+      }),
+    /no rollout found/,
+  );
+
+  assert.deepEqual(calls, ["thread/read"]);
 });
 
-test("readThreadSnapshot falls back when upstream disconnects before startup RPC returns", async () => {
-  // bridge is still starting (ready:false) but socket dropped before thread/start RPC returned
-  // startupFailed should be true (set by upstream close/error handler while !ready)
+test("readThreadSnapshot never resumes after an upstream read failure", async () => {
   const calls = [];
-  const snapshot = await readThreadSnapshot({
-    threadId: "thread-123",
-    liveBridge: {
-      ready: false,
-      startupFailed: true,
-      requestedThreadId: "thread-123",
-      threadId: null,
-      history: [],
-    },
-    request: async (method, params) => {
-      calls.push({ method, params });
-      if (method === "thread/read") throw new Error("not found");
-      return { thread: { id: "thread-123", turns: [] } };
-    },
-    model: "gpt-5.4",
-    workdir: "/tmp/user-project",
-    historyFromThread: () => [{ type: "status", text: "reconnected" }],
-  });
 
-  assert.deepEqual(calls.map((c) => c.method), ["thread/read", "thread/resume"]);
-  assert.equal(snapshot.source, "app-server");
-  assert.deepEqual(snapshot.history, [{ type: "status", text: "reconnected" }]);
+  await assert.rejects(
+    () =>
+      readThreadSnapshot({
+        threadId: "thread-123",
+        liveBridge: { ready: false, startupFailed: true, requestedThreadId: "thread-123", threadId: null, history: [] },
+        request: async (method) => {
+          calls.push(method);
+          throw new Error("not found");
+        },
+        historyFromThread: () => [],
+      }),
+    /not found/,
+  );
+
+  assert.deepEqual(calls, ["thread/read"]);
 });

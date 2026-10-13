@@ -12,6 +12,7 @@ const addButton = document.querySelector("#addButton");
 const accessButton = document.querySelector("#accessButton");
 const modelButton = document.querySelector("#modelButton");
 const modelMenu = document.querySelector("#modelMenu");
+const modelChoices = document.querySelector("#modelChoices");
 const expandPromptButton = document.querySelector("#expandPromptButton");
 const voiceButton = document.querySelector("#voiceButton");
 const fileInput = document.querySelector("#fileInput");
@@ -70,11 +71,11 @@ if (params.has("token") && window.history?.replaceState) {
 }
 
 const themeOptions = [
-  { id: "simple", name: "Codex ライト", detail: "ニュートラル / ミントグリーン" },
-  { id: "codex-dark", name: "Codex ダーク", detail: "チャコール / ソフトグリーン" },
-  { id: "cyberpunk", name: "サイバーパンク", detail: "緑の端末文字 / 流れるコード背景" },
-  { id: "botanical", name: "ボタニカル", detail: "グリーン / 温かみのあるクリーム" },
-  { id: "stigmata", name: "Stigmata", detail: "氷青 / 銀白 / 赤い販売機の残光" },
+  { id: "simple", name: "Codex 浅色", detail: "中性 / 薄荷绿" },
+  { id: "codex-dark", name: "Codex 深色", detail: "炭灰 / 柔绿" },
+  { id: "cyberpunk", name: "赛博朋克", detail: "绿色终端字 / 流动代码背景" },
+  { id: "botanical", name: "植物", detail: "绿色 / 暖奶油色" },
+  { id: "stigmata", name: "Stigmata", detail: "冰蓝 / 银白 / 红色售货机余晖" },
 ];
 let selectedTheme = localStorage.getItem("codexPhoneTheme") || "simple";
 
@@ -99,7 +100,8 @@ let lastThreadListError = "";
 let lastThreadRefreshError = "";
 let selectedThreadRefreshActive = false;
 let selectedModel = localStorage.getItem("codexPhoneModel") || "";
-let selectedModelLabel = localStorage.getItem("codexPhoneModelLabel") || "5.5";
+let selectedModelLabel = localStorage.getItem("codexPhoneModelLabel") || "使用默认模型";
+let selectedModelExplicit = localStorage.getItem("codexPhoneModelExplicit") === "1";
 let selectedReasoning = localStorage.getItem("codexPhoneReasoning") || "中";
 let settingsRenderSeq = 0;
 let artifactItems = [];
@@ -114,7 +116,7 @@ let currentWorkspace = {
   gitBranch: "",
 };
 let accessMode = {
-  label: "フルアクセス",
+  label: "完全访问",
   approvalPolicy: "never",
   sandboxMode: "danger-full-access",
 };
@@ -153,18 +155,18 @@ const panelWidthConfig = {
 };
 
 const runStateText = {
-  connecting: "接続中",
-  ready: "待機中",
-  running: "Codex 処理中",
-  streaming: "回答生成中",
-  reconnecting: "再接続中",
-  approval: "承認待ち",
-  interrupting: "中断中",
-  interrupted: "中断しました",
-  syncing: "履歴同期中",
-  done: "完了",
-  disconnected: "切断",
-  error: "エラー",
+  connecting: "正在连接",
+  ready: "空闲",
+  running: "Codex 正在处理",
+  streaming: "正在生成回答",
+  reconnecting: "正在重新连接",
+  approval: "等待授权",
+  interrupting: "正在中断",
+  interrupted: "已中断",
+  syncing: "正在同步历史",
+  done: "完成",
+  disconnected: "已断开",
+  error: "错误",
 };
 const interruptibleRunStates = new Set(["running", "streaming", "approval", "interrupting"]);
 const terminalRunStates = new Set(["ready", "done", "interrupted", "disconnected", "error"]);
@@ -174,9 +176,9 @@ function updateInterruptButton() {
   const visible = interruptibleRunStates.has(currentRunState);
   const disabled =
     !visible || currentRunState === "interrupting" || interruptRequestPending || !ws || ws.readyState !== WebSocket.OPEN;
-  let label = "現在の処理を中断";
-  if (visible && (currentRunState === "interrupting" || interruptRequestPending)) label = "中断要求を送信中です";
-  else if (visible && (!ws || ws.readyState !== WebSocket.OPEN)) label = "接続後に処理を中断";
+  let label = "中断当前任务";
+  if (visible && (currentRunState === "interrupting" || interruptRequestPending)) label = "正在发送中断请求";
+  else if (visible && (!ws || ws.readyState !== WebSocket.OPEN)) label = "将在连接后中断任务";
   interruptButton.classList.toggle("hidden", !visible);
   interruptButton.disabled = disabled;
   interruptButton.title = label;
@@ -185,7 +187,7 @@ function updateInterruptButton() {
 
 function setRunState(state, label) {
   if (!runState || !runStateLabel) return;
-  const nextLabel = label || runStateText[state] || state;
+  const nextLabel = localizeUiText(label || runStateText[state] || state);
   currentRunState = state;
   if (terminalRunStates.has(state)) interruptRequestPending = false;
   if (state !== "approval" && pendingApproval) {
@@ -217,15 +219,15 @@ function setWorkspaceMeta(payload = {}) {
   if (!workspaceIndicator || !workspaceRepo || !workspaceLocation || !branchName) return;
   const hasMeta = Boolean(repoName || location || branch);
   workspaceIndicator.classList.toggle("empty", !hasMeta);
-  workspaceRepo.textContent = repoName || "リポジトリ";
+  workspaceRepo.textContent = repoName || "仓库";
   workspaceRepo.title = repoName || "";
   workspaceLocation.textContent = compactWorkspaceLocation(location || ".");
   workspaceLocation.title = location || ".";
-  branchName.textContent = branch || "不明";
+  branchName.textContent = branch || "未知";
   branchName.title = branch || "";
   workspaceIndicator.setAttribute(
     "aria-label",
-    `現在のワークスペース: ${repoName || "不明"} ${location || "."} ${branch || "不明"}`,
+    `当前工作区：${repoName || "未知"} ${location || "."} ${branch || "未知"}`,
   );
 }
 
@@ -288,10 +290,65 @@ function applyTheme(themeId) {
 applyTheme(selectedTheme);
 
 const accessModes = [
-  { label: "フルアクセス", approvalPolicy: "never", sandboxMode: "danger-full-access" },
-  { label: "確認モード", approvalPolicy: "on-request", sandboxMode: "workspace-write" },
-  { label: "読み取り専用", approvalPolicy: "on-request", sandboxMode: "read-only" },
+  { label: "完全访问", approvalPolicy: "never", sandboxMode: "danger-full-access" },
+  { label: "确认模式", approvalPolicy: "on-request", sandboxMode: "workspace-write" },
+  { label: "只读", approvalPolicy: "on-request", sandboxMode: "read-only" },
 ];
+
+const japaneseUiReplacements = [
+  ["Codex応答ストリームが一時切断されました。再接続中です。", "Codex 响应流暂时中断，正在重新连接。"],
+  ["Codex応答ストリームが切断されました。再接続後にもう一度送信してください。", "Codex 响应流已断开，请重新连接后再次发送。"],
+  ["共有Codexブリッジに参加しました。", "已加入共享 Codex bridge。"],
+  ["既存threadを再開中...", "正在恢复已有对话..."],
+  ["既存threadを再開しました:", "已恢复已有对话："],
+  ["新しいthreadを開始中...", "正在新建对话..."],
+  ["空のthreadを新しいthreadとして再接続中...", "正在将空对话重新建立为新对话..."],
+  ["履歴同期を更新しました", "历史同步已更新"],
+  ["履歴同期に失敗しました", "历史同步失败"],
+  ["中断要求を送信中", "正在发送中断请求"],
+  ["中断に失敗", "中断失败"],
+  ["中断しました", "已中断"],
+  ["承認待ち", "等待授权"],
+  ["待機中", "空闲"],
+  ["再接続中", "正在重新连接"],
+  ["接続中", "正在连接"],
+  ["ネットワークを待っています", "正在等待网络"],
+  ["thread履歴を読み込み中", "正在读取对话历史"],
+  ["スキルを読めませんでした:", "无法读取技能："],
+  ["導入済み/有効なプラグインはありません", "导入且启用的插件为空"],
+  ["接続エラー", "连接错误"],
+  ["エラー", "错误"],
+  ["完了しました", "已完成"],
+  ["完了", "完成"],
+  ["権限を", "权限已切换为 "],
+  ["に切り替えました。次の送信から反映します。", "，将在下一条消息生效。"],
+  ["確認モード", "确认模式"],
+  ["読み取り専用", "只读"],
+  ["フルアクセス", "完全访问"],
+  ["thread更新を読めませんでした:", "无法读取对话更新："],
+  ["thread一覧を読めませんでした:", "无法读取对话列表："],
+  ["thread履歴を読み込み中...", "正在读取对话历史..."],
+  ["bridge情報を読めませんでした:", "无法读取 bridge 信息："],
+  ["bridge情報を確認できません", "无法确认 bridge 信息"],
+  ["モデル一覧を取得できませんでした", "无法获取模型列表"],
+  ["正在加载...", "正在加载..."],
+  ["加载失败", "加载失败"],
+  ["アーティファクト", "产物"],
+  ["ワークスペース", "工作区"],
+  ["プラグイン", "插件"],
+  ["オートメーション", "自动化"],
+  ["設定", "设置"],
+  ["モデル", "模型"],
+  ["インテリジェンス", "推理强度"],
+  ["音声入力", "语音输入"],
+  ["閉じる", "关闭"],
+];
+
+function localizeUiText(value) {
+  let text = String(value ?? "");
+  for (const [from, to] of japaneseUiReplacements) text = text.replaceAll(from, to);
+  return text;
+}
 
 const fontAwesomeIcons = {
   chevronDown: {
@@ -321,7 +378,7 @@ function updateModelButton() {
   const showReasoning = activeProvider === "codex";
   const label = showReasoning ? `${selectedModelLabel} ${selectedReasoning}` : selectedModelLabel;
   modelButton.innerHTML = `<span class="model-button-label">${escapeHtml(label)}</span>${fontAwesomeIcon("chevronDown", "button-chevron-icon")}`;
-  modelButton.setAttribute("aria-label", showReasoning ? `モデル ${selectedModelLabel}、インテリジェンス ${selectedReasoning}` : `モデル ${selectedModelLabel}`);
+  modelButton.setAttribute("aria-label", showReasoning ? `模型 ${selectedModelLabel}，推理强度 ${selectedReasoning}` : `模型 ${selectedModelLabel}`);
   for (const row of modelMenu.querySelectorAll("[data-reasoning]")) {
     row.hidden = !showReasoning;
     const active = row.dataset.reasoning === selectedReasoning;
@@ -392,7 +449,7 @@ function selectReasoning(value) {
   localStorage.setItem("codexPhoneReasoning", value);
   updateModelButton();
   closeModelMenu();
-  addStatus(`インテリジェンスを ${value} に設定しました。`);
+  addStatus(`推理强度已设为 ${value}。`);
 }
 
 function selectModel(model) {
@@ -402,9 +459,59 @@ function selectModel(model) {
   if (selectedModelLabel.startsWith("5.")) selectedModelLabel = selectedModelLabel;
   localStorage.setItem("codexPhoneModel", selectedModel);
   localStorage.setItem("codexPhoneModelLabel", selectedModelLabel);
+  localStorage.setItem("codexPhoneModelExplicit", "1");
+  selectedModelExplicit = true;
   updateModelButton();
   closeModelMenu();
-  addStatus(`モデルを ${model.toUpperCase()} に設定しました。次の送信から反映します。`);
+  addStatus(`已选择模型 ${model.toUpperCase()}，将在下一条消息生效。`);
+}
+
+function normalizeModelCandidates(payload) {
+  const raw = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : [];
+  const byId = new Map();
+  for (const candidate of raw) {
+    const id = String(candidate?.model || candidate?.id || "").trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, { id, label: String(candidate.displayName || id).trim() || id });
+  }
+  return Array.from(byId.values());
+}
+
+function configuredModelFromConfig(payload) {
+  return String(payload?.config?.config?.model || payload?.config?.model || "").trim();
+}
+
+function renderModelChoices(models) {
+  if (!modelChoices) return;
+  modelChoices.replaceChildren();
+  for (const candidate of models) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "model-menu-row submenu-row";
+    row.dataset.modelChoice = candidate.id;
+    row.setAttribute("role", "menuitemradio");
+    row.setAttribute("aria-checked", String(candidate.id === selectedModel));
+    row.textContent = candidate.label;
+    modelChoices.appendChild(row);
+  }
+}
+
+async function initializeModelChoices() {
+  if (activeProvider !== "codex") return;
+  const [modelsResult, configResult] = await Promise.all([
+    apiGet("/api/models").catch(() => null),
+    apiGet("/api/config").catch(() => null),
+  ]);
+  const models = normalizeModelCandidates(modelsResult);
+  const configuredModel = configuredModelFromConfig(configResult);
+  if (!selectedModelExplicit) {
+    // Omitting model leaves selection to app-server, including when its configured
+    // default is unavailable from the optional model/list endpoint.
+    selectedModel = "";
+    selectedModelLabel = configuredModel || "使用默认模型";
+  }
+  renderModelChoices(models);
+  updateModelButton();
 }
 
 function syncSidebarState({ focus = false } = {}) {
@@ -448,7 +555,7 @@ function titleForThread(thread) {
 
 function projectForThread(thread) {
   const cwd = String(thread.cwd || "").replace(/\/+$/, "");
-  if (!cwd) return "No project";
+  if (!cwd) return "未指定项目";
   return cwd.split("/").filter(Boolean).pop() || cwd;
 }
 
@@ -459,10 +566,10 @@ function formatRelativeTime(timestamp) {
   const hours = Math.floor(diffSeconds / 3600);
   const days = Math.floor(diffSeconds / 86400);
   const months = Math.floor(days / 30);
-  if (diffSeconds < 3600) return "今";
-  if (hours < 24) return `${hours}時間`;
-  if (days < 30) return `${days}日`;
-  return `${months || 1}か月`;
+  if (diffSeconds < 3600) return "刚刚";
+  if (hours < 24) return `${hours} 小时前`;
+  if (days < 30) return `${days} 天前`;
+  return `${months || 1} 个月前`;
 }
 
 function isBlockStart(line) {
@@ -758,7 +865,7 @@ function renderImageGallery(images = []) {
     figure.className = "image-preview";
     const img = document.createElement("img");
     img.src = image.dataUrl || urlWithToken(image.url);
-    img.alt = image.name || "添付画像";
+    img.alt = image.name || "附件图片";
     img.loading = "lazy";
     const caption = document.createElement("figcaption");
     caption.textContent = image.name || "image";
@@ -769,9 +876,9 @@ function renderImageGallery(images = []) {
 }
 
 function fileKindLabel(kind) {
-  if (kind === "markdown") return "ドキュメント・MD";
-  if (kind === "image") return "画像";
-  return "ファイル";
+  if (kind === "markdown") return "文档 / Markdown";
+  if (kind === "image") return "图片";
+  return "文件";
 }
 
 function diffStatLabel(file) {
@@ -799,17 +906,17 @@ function renderReviewDigest(result) {
           }),
           { additions: 0, deletions: 0 },
         );
-  const sourceLabel = result.source === "latest commit" ? "最新commit" : "作業ツリー";
+  const sourceLabel = result.source === "latest commit" ? "最新提交" : "工作区";
   const wrap = document.createElement("section");
   wrap.className = "review-digest";
   wrap.innerHTML = `
     <details class="review-reference-toggle">
-      <summary>${totalFiles}件の変更ファイル・${sourceLabel}</summary>
+      <summary>${totalFiles} 个变更文件 · ${sourceLabel}</summary>
     </details>
     <div class="artifact-card-list"></div>
     <div class="diff-card">
       <div class="diff-card-header">
-        <strong>${totalFiles}個のファイルが変更されました</strong>
+        <strong>${totalFiles} 个文件已变更</strong>
         <span>${diffStatLabel({ additions: totals.additions, deletions: totals.deletions })}</span>
       </div>
       <div class="diff-file-list"></div>
@@ -829,7 +936,7 @@ function renderReviewDigest(result) {
         <strong>${escapeHtml(file.path.split(/[\\/]/).pop() || file.path)}</strong>
         <small>${escapeHtml(fileKindLabel(file.kind))}</small>
       </span>
-      <span class="chat-artifact-open">開く</span>
+      <span class="chat-artifact-open">打开</span>
     `;
     bindArtifactOpenTrigger(button);
     artifactListNode.appendChild(button);
@@ -878,26 +985,26 @@ async function appendReviewDigest() {
     log.appendChild(el);
     log.scrollTop = log.scrollHeight;
   } catch (error) {
-    addStatus(`差分サマリーを更新できませんでした: ${error.message}`);
+    addStatus(`无法更新差异摘要：${error.message}`);
   }
 }
 
 function summarizeStatus(items) {
-  if (items.some((item) => item.includes("音声入力"))) return "音声入力";
+  if (items.some((item) => item.includes("语音输入"))) return "语音输入";
   const reads = items.filter((item) => /^Read\s+/i.test(item)).length;
-  const commands = items.filter((item) => /command|コマンド|\$\s/.test(item)).length;
-  const files = items.filter((item) => /file|ファイル/i.test(item)).length;
+  const commands = items.filter((item) => /command|命令|\$\s/.test(item)).length;
+  const files = items.filter((item) => /file|文件/i.test(item)).length;
   const parts = [];
-  if (reads) parts.push(`${reads}個のファイルを調査`);
-  if (commands) parts.push(`${commands}件のコマンドを実行`);
-  if (files && !reads) parts.push(`${files}件のファイル操作`);
-  return parts.length ? parts.join("、") : `${items.length}件の作業ログ`;
+  if (reads) parts.push(`读取了 ${reads} 个文件`);
+  if (commands) parts.push(`执行了 ${commands} 条命令`);
+  if (files && !reads) parts.push(`${files} 项文件操作`);
+  return parts.length ? parts.join("、") : `${items.length} 条操作日志`;
 }
 
 function updateStatusGroup(group) {
   const count = group.items.length;
   group.summaryText.textContent = summarizeStatus(group.items);
-  group.count.textContent = `${count}件`;
+  group.count.textContent = `${count} 条`;
   group.list.replaceChildren(
     ...group.items.map((item) => {
       const row = document.createElement("li");
@@ -908,6 +1015,7 @@ function updateStatusGroup(group) {
 }
 
 function addStatusGroupItem(text) {
+  text = localizeUiText(text);
   if (!statusGroup || statusGroup.items.length >= 12) {
     const el = document.createElement("article");
     el.className = "entry status status-group";
@@ -943,6 +1051,7 @@ function addStatusGroupItem(text) {
 }
 
 function addEntry(kind, text, images = []) {
+  if (kind === "status" || kind === "error") text = localizeUiText(text);
   if (kind === "status") {
     addStatusGroupItem(text);
     return null;
@@ -965,7 +1074,7 @@ function addEntry(kind, text, images = []) {
   const tools = document.createElement("div");
   tools.className = "entry-tools";
   if (kind === "assistant" || kind === "user") {
-    tools.innerHTML = '<button type="button" class="entry-tool-button" data-message-action="copy" aria-label="メッセージをコピー" title="コピー"></button>';
+    tools.innerHTML = '<button type="button" class="entry-tool-button" data-message-action="copy" aria-label="复制消息" title="复制"></button>';
   }
 
   el.append(avatar, body, tools);
@@ -1052,7 +1161,7 @@ function prepareThreadHistoryForConnect(threadId) {
   }
   const cachedHistory = threadHistoryCache.get(threadId);
   if (cachedHistory) renderHistoryIfChanged(cachedHistory, { threadId, cache: false });
-  else renderHistoryIfChanged([{ type: "assistant", text: "thread履歴を読み込み中..." }], { threadId, cache: false });
+  else renderHistoryIfChanged([{ type: "assistant", text: "正在读取对话历史..." }], { threadId, cache: false });
 }
 
 function renderThreadList() {
@@ -1061,7 +1170,7 @@ function renderThreadList() {
   const newProject = document.createElement("button");
   newProject.type = "button";
   newProject.className = selectedThread ? "project-heading new-project" : "project-heading new-project active";
-  newProject.innerHTML = `${fontAwesomeIcon("folderPlus", "project-icon")}<span>New ${providerLabel(currentThreadProvider())} thread</span>`;
+  newProject.innerHTML = `${fontAwesomeIcon("folderPlus", "project-icon")}<span>新建 ${providerLabel(currentThreadProvider())} 对话</span>`;
   newProject.addEventListener("click", () => selectThread(""));
   threadList.appendChild(newProject);
 
@@ -1109,12 +1218,12 @@ function renderThreadList() {
     if (threads.length > visibleThreads.length) {
       const more = document.createElement("div");
       more.className = "project-more";
-      more.textContent = "もっと表示する";
+      more.textContent = "显示更多";
       group.appendChild(more);
     } else if (!visibleThreads.length) {
       const empty = document.createElement("div");
       empty.className = "project-empty";
-      empty.textContent = "チャットはありません";
+      empty.textContent = "没有对话";
       group.appendChild(empty);
     }
     threadList.appendChild(group);
@@ -1147,7 +1256,7 @@ async function loadBridgeInfo() {
     authMode = info.authMode || (tokenRequired ? "token" : "debug-no-token");
     if (!tokenRequired) {
       localStorage.removeItem("codexPhoneToken");
-      addStatus("デバッグモード: token なしで localhost bridge に接続します。");
+      addStatus("调试模式：无需 token 即连接本机 bridge。 ");
     }
     return info;
   } catch (error) {
@@ -1266,7 +1375,7 @@ function setActivePanel(panel) {
 function clearPanel(title, panel = activePanel) {
   showRightPanel();
   setActivePanel(panel);
-  artifactTitle.textContent = title;
+  artifactTitle.textContent = localizeUiText(title);
   artifactList.classList.remove("artifact-browser-list");
   artifactList.replaceChildren();
   activeArtifactPath = "";
@@ -1275,6 +1384,8 @@ function clearPanel(title, panel = activePanel) {
 }
 
 function addPanelRow(text, detail, onClick, icon = "") {
+  text = localizeUiText(text);
+  detail = localizeUiText(detail);
   const row = document.createElement("button");
   row.type = "button";
   row.className = "artifact-row";
@@ -1386,7 +1497,7 @@ async function updateSlashSkillMenu() {
   }
   activeSlashMatch = match;
   ensureSlashSkillMenu().classList.remove("hidden");
-  if (!slashSkillsLoaded) ensureSlashSkillMenu().textContent = "読み込み中...";
+  if (!slashSkillsLoaded) ensureSlashSkillMenu().textContent = "正在加载...";
   try {
     await loadSlashSkills();
     if (!activeSlashMatch) return;
@@ -1396,7 +1507,7 @@ async function updateSlashSkillMenu() {
     menu.replaceChildren();
     const row = document.createElement("div");
     row.className = "slash-skill-empty";
-    row.textContent = `スキルを読めませんでした: ${error.message}`;
+    row.textContent = `无法读取技能： ${error.message}`;
     menu.appendChild(row);
     menu.classList.remove("hidden");
   }
@@ -1445,7 +1556,7 @@ function renderArtifactIndex(items) {
   artifactItems = items;
   activeArtifactPath = "";
   setActivePanel("artifacts");
-  artifactTitle.textContent = "アーティファクト";
+  artifactTitle.textContent = "产物";
   artifactList.classList.add("artifact-browser-list");
   renderArtifactRows();
   hideArtifactPreview();
@@ -1467,7 +1578,7 @@ function renderArtifactRows() {
     );
     row.classList.toggle("active", item.path === activeArtifactPath);
   }
-  if (!artifactItems.length) addPanelRow("アーティファクトは見つかりませんでした");
+  if (!artifactItems.length) addPanelRow("没有找到产物");
 }
 
 function hideArtifactPreview() {
@@ -1536,7 +1647,7 @@ document.addEventListener(
 
 function showToolError(name, error) {
   clearPanel(name);
-  addPanelRow("読み込みに失敗しました", error.message);
+  addPanelRow("加载失败", error.message);
   addEntry("error", `${name}: ${error.message}`);
   document.body.classList.remove("show-sidebar");
 }
@@ -1549,8 +1660,8 @@ function getPluginStatus(summary = {}) {
 }
 
 async function showPlugins() {
-  clearPanel("プラグイン");
-  addPanelRow("読み込み中...");
+  clearPanel("插件");
+  addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/plugins");
     const marketplaces = result.marketplaces || result.data || [];
@@ -1572,7 +1683,7 @@ async function showPlugins() {
 
 async function showAutomations() {
   clearPanel("オートメーション");
-  addPanelRow("読み込み中...");
+  addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/automations");
     artifactList.replaceChildren();
@@ -1588,7 +1699,7 @@ async function showSettings() {
   clearPanel("設定");
   artifactList.replaceChildren();
   renderThemeSettings();
-  const loadingRow = addPanelRow("読み込み中...");
+  const loadingRow = addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/config");
     if (renderSeq !== settingsRenderSeq) return;
@@ -1604,7 +1715,7 @@ async function showSettings() {
   } catch (error) {
     if (renderSeq !== settingsRenderSeq) return;
     loadingRow.remove();
-    addPanelRow("読み込みに失敗しました", error.message);
+    addPanelRow("加载失败", error.message);
     addEntry("error", `設定: ${error.message}`);
   }
 }
@@ -1643,19 +1754,14 @@ function renderThemeSettings() {
 
 async function showModels() {
   clearPanel("モデル");
-  addPanelRow("読み込み中...");
+  addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/models");
     artifactList.replaceChildren();
     const models = result.data || [];
     for (const candidate of models.slice(0, 24)) {
       addPanelRow(candidate.displayName || candidate.model || candidate.id, candidate.defaultReasoningEffort || "", () => {
-        selectedModel = candidate.model || candidate.id;
-        selectedModelLabel = (candidate.displayName || selectedModel).replace(/^GPT-/, "").replace(/^gpt-/, "");
-        localStorage.setItem("codexPhoneModel", selectedModel);
-        localStorage.setItem("codexPhoneModelLabel", selectedModelLabel);
-        updateModelButton();
-        addStatus(`モデルを ${selectedModel} に設定しました。次の送信から反映します。`);
+        selectModel(candidate.model || candidate.id);
       });
     }
     if (!models.length) addPanelRow("モデル一覧を取得できませんでした");
@@ -1702,13 +1808,13 @@ function renderWorkspaceEntries(entries) {
 }
 
 async function showWorkspace() {
-  clearPanel("ワークスペース", "workspace");
-  addPanelRow("読み込み中...");
+  clearPanel("工作区", "workspace");
+  addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/workspace?limit=180");
     renderWorkspaceEntries(result.data || []);
   } catch (error) {
-    showToolError("ワークスペース", error);
+    showToolError("工作区", error);
   }
 }
 
@@ -1733,13 +1839,13 @@ function renderReview(result) {
 }
 
 async function showReview() {
-  clearPanel("レビュー", "review");
-  addPanelRow("読み込み中...");
+  clearPanel("审查", "review");
+  addPanelRow("正在加载...");
   try {
     const result = await apiGet("/api/review");
     renderReview(result);
   } catch (error) {
-    showToolError("レビュー", error);
+    showToolError("审查", error);
   }
 }
 
@@ -1763,7 +1869,7 @@ function startVoiceInput() {
     return;
   }
   const recognition = new SpeechRecognition();
-  recognition.lang = document.documentElement.lang || "ja-JP";
+  recognition.lang = document.documentElement.lang || "zh-CN";
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
   voiceButton.classList.add("listening");
@@ -1806,7 +1912,7 @@ async function showArtifact(path) {
   const shouldFocusPanel = window.matchMedia("(max-width: 1100px)").matches;
   showRightPanel();
   setActivePanel("artifacts");
-  artifactTitle.textContent = "アーティファクト";
+  artifactTitle.textContent = "产物";
   artifactList.classList.add("artifact-browser-list");
   activeArtifactPath = path;
   renderArtifactRows();
@@ -1814,9 +1920,9 @@ async function showArtifact(path) {
   artifactPreview.innerHTML = `
     <div class="artifact-preview-header">
       <div class="artifact-preview-title">${escapeHtml(path)}</div>
-      <button type="button" class="artifact-preview-close" data-preview-close>閉じる</button>
+      <button type="button" class="artifact-preview-close" data-preview-close>关闭</button>
     </div>
-    <p>読み込み中...</p>
+    <p>正在加载...</p>
   `;
   if (shouldFocusPanel) syncRightPanelState({ focus: true });
   try {
@@ -1827,7 +1933,7 @@ async function showArtifact(path) {
     artifactPreview.innerHTML = `
       <div class="artifact-preview-header">
         <div class="artifact-preview-title">${escapeHtml(path)}</div>
-        <button type="button" class="artifact-preview-close" data-preview-close>閉じる</button>
+        <button type="button" class="artifact-preview-close" data-preview-close>关闭</button>
       </div>
       <p>読み込みに失敗しました: ${escapeHtml(error.message)}</p>
     `;
@@ -1844,7 +1950,7 @@ function setArtifactPreview(result) {
   const header = `
     <div class="artifact-preview-header">
       <div class="artifact-preview-title">${escapeHtml(result.path)}</div>
-      <button type="button" class="artifact-preview-close" data-preview-close>閉じる</button>
+      <button type="button" class="artifact-preview-close" data-preview-close>关闭</button>
     </div>
   `;
   if (isImage) {
@@ -1865,7 +1971,7 @@ function renderAttachments() {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "attachment-chip";
-    chip.setAttribute("aria-label", `${file.name} の添付を削除`);
+    chip.setAttribute("aria-label", `移除 ${file.name} 附件`);
     const thumb = document.createElement("img");
     thumb.src = file.dataUrl;
     thumb.alt = "";
@@ -2414,6 +2520,7 @@ bindResizeHandle(rightResizeHandle, "right");
 syncSidebarState();
 syncRightPanelState();
 loadBridgeInfo()
+  .then(() => initializeModelChoices())
   .then(() => loadArtifacts())
   .then(() => loadThreads().catch(() => {}))
   .then(connect)

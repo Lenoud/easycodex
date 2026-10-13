@@ -83,7 +83,9 @@ const shouldStartCodexServer = isCodexProvider && !process.env.CODEX_APP_SERVER_
 const workdirEnvKey = isClaudeProvider ? "CLAUDE_WORKDIR" : "CODEX_WORKDIR";
 const modelEnvKey = isClaudeProvider ? "CLAUDE_MODEL" : "CODEX_MODEL";
 const workdir = path.resolve(process.env.PHONE_WORKDIR || process.env[workdirEnvKey] || process.env.CODEX_WORKDIR || root);
-const model = process.env.PHONE_MODEL || process.env[modelEnvKey] || (isClaudeProvider ? "sonnet" : "gpt-5.4");
+// When no explicit Codex override is configured, let app-server use the
+// model from the user's current Codex configuration.
+const model = process.env.PHONE_MODEL || process.env[modelEnvKey] || (isClaudeProvider ? "sonnet" : "");
 const historySyncEnabled = isCodexProvider && isHistorySyncEnabled(process.env);
 const debugNoToken = /^(1|true|yes|on)$/i.test(process.env.PHONE_DEBUG_NO_TOKEN || "");
 const debugBind = (process.env.PHONE_DEBUG_BIND || "").trim().toLowerCase();
@@ -99,9 +101,7 @@ const bridges = new Map();
 const bridgeIdleGraceMs = positiveNumber(process.env.PHONE_BRIDGE_IDLE_GRACE_MS, 15_000);
 let notificationBridgeUrls = [];
 const historyLimit = 80;
-const modelOptions = isClaudeProvider
-  ? ["sonnet", "opus", "haiku", "claude-sonnet-4-6", "claude-opus-4-5"]
-  : ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"];
+const modelOptions = isClaudeProvider ? ["sonnet", "opus", "haiku", "claude-sonnet-4-6", "claude-opus-4-5"] : [];
 const imageExtensions = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -1492,13 +1492,13 @@ class SharedBridge {
       const params = this.requestedThreadId
         ? {
             threadId: this.requestedThreadId,
-            model,
+            ...(model ? { model } : {}),
             cwd: workdir,
             approvalPolicy: "on-request",
             sandbox: "workspace-write",
           }
         : {
-            model,
+            ...(model ? { model } : {}),
             cwd: workdir,
             approvalPolicy: "on-request",
             sandbox: "workspace-write",
@@ -1525,7 +1525,7 @@ class SharedBridge {
             }
             this.requestedThreadId = null;
             const id = this.request("thread/start", {
-              model,
+              ...(model ? { model } : {}),
               cwd: workdir,
               approvalPolicy: "on-request",
               sandbox: "workspace-write",
@@ -2256,8 +2256,6 @@ async function main() {
           threadId,
           liveBridge: findLiveBridge(bridges, threadId),
           request: appServerRequest,
-          model,
-          workdir,
           historyFromThread,
         });
         sendJson(res, 200, { provider: requestedProvider, activeProvider: agentProvider, ...snapshot });

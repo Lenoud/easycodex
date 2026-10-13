@@ -31,7 +31,7 @@ async function importJsxModule(filePath) {
 
 function renderDocument(shell) {
   return `<!doctype html>
-<html lang="ja">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

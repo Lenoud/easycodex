@@ -21,27 +21,15 @@ function findLiveBridge(bridges, threadId) {
   return null;
 }
 
-async function readThreadSnapshot({ threadId, liveBridge, request, model, workdir, historyFromThread }) {
+async function readThreadSnapshot({ threadId, liveBridge, request, historyFromThread }) {
   const liveSnapshot = liveBridgeSnapshot(liveBridge, threadId);
   if (liveSnapshot) return liveSnapshot;
 
-  let thread;
-  try {
-    const result = await request("thread/read", {
-      threadId,
-      includeTurns: true,
-    });
-    thread = result.thread || result;
-  } catch (readError) {
-    const result = await request("thread/resume", {
-      threadId,
-      model,
-      cwd: workdir,
-      approvalPolicy: "on-request",
-      sandbox: "workspace-write",
-    });
-    thread = result.thread || result;
-  }
+  const result = await request("thread/read", {
+    threadId,
+    includeTurns: true,
+  });
+  const thread = result.thread || result;
 
   return {
     threadId: thread.id || threadId,

@@ -55,6 +55,22 @@ async function mockApi(page, state = {}) {
       await route.fulfill({ json: { tokenRequired: true, authMode: "token" } });
       return;
     }
+    if (url.pathname === "/api/models") {
+      if (state.failModels) {
+        await route.abort("failed");
+        return;
+      }
+      await route.fulfill({ json: state.models || {} });
+      return;
+    }
+    if (url.pathname === "/api/config") {
+      if (state.failConfig) {
+        await route.abort("failed");
+        return;
+      }
+      await route.fulfill({ json: state.config || {} });
+      return;
+    }
     if (url.pathname === "/api/artifacts") {
       const artifacts = state.artifacts || [];
       await route.fulfill({ json: { data: artifacts, artifacts } });
@@ -189,6 +205,10 @@ test("web app submit sends prompt through WebSocket and hides raw reconnect payl
   assert.equal(payload.text, "WEBアプリからの送信テスト");
   assert.equal(payload.options.model, undefined);
   assert.equal(await page.inputValue("#prompt"), "");
+  await page.evaluate(() => window.__dispatchServerMessage({ type: "user", text: "日本語の用户消息不应变更" }));
+  assert.match(await page.locator("#log").innerText(), /日本語の用户消息不应变更/);
+  await page.evaluate(() => window.__dispatchServerMessage({ type: "assistantDelta", text: "日本語の会話本文は変換しない" }));
+  assert.match(await page.locator("#log").innerText(), /日本語の会話本文は変換しない/);
 
   await page.evaluate(() => {
     window.__dispatchServerMessage({
@@ -208,10 +228,57 @@ test("web app submit sends prompt through WebSocket and hides raw reconnect payl
 
   const statusText = await page.locator("#runStateLabel").innerText();
   const logText = await page.locator("#log").innerText();
-  assert.match(statusText, /再接続中/);
+  assert.match(statusText, /正在重新连接/);
   assert.doesNotMatch(logText, /responseStreamDisconnected/);
   assert.doesNotMatch(logText, /websocket closed by server before response\.completed/);
   assert.equal(await page.locator("#runState").getAttribute("data-state"), "reconnecting");
+});
+
+test("model discovery failures do not block connection or override the app-server default", async (t) => {
+  const server = await startStaticServer();
+  let browser;
+  t.after(async () => {
+    if (browser) await browser.close();
+    await server.close();
+  });
+
+  browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+  await mockApi(page, { failModels: true, failConfig: true });
+  await mockWebSocket(page);
+  await page.goto(`${server.origin}/?token=${token}`, { waitUntil: "networkidle" });
+  await page.waitForSelector("#send:not([disabled])");
+
+  await page.fill("#prompt", "keep configured default");
+  await page.click("#send");
+  const payload = await page.evaluate(() => window.__sentFrames.at(-1));
+
+  assert.equal(payload.options.model, undefined);
+  assert.equal(await page.locator("#runState").getAttribute("data-state"), "ready");
+});
+
+test("an app-server default absent from model discovery remains the default", async (t) => {
+  const server = await startStaticServer();
+  let browser;
+  t.after(async () => {
+    if (browser) await browser.close();
+    await server.close();
+  });
+
+  browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+  await mockApi(page, {
+    models: { data: [{ id: "gpt-listed", displayName: "Listed model" }] },
+    config: { config: { model: "gpt-configured-only" } },
+  });
+  await mockWebSocket(page);
+  await page.goto(`${server.origin}/?token=${token}`, { waitUntil: "networkidle" });
+  await page.waitForSelector("#send:not([disabled])");
+
+  await page.fill("#prompt", "preserve configured model");
+  await page.click("#send");
+  const payload = await page.evaluate(() => window.__sentFrames.at(-1));
+  assert.equal(payload.options.model, undefined);
 });
 
 test("web app reconnects automatically after the browser bridge disconnects", async (t) => {
@@ -241,7 +308,7 @@ test("web app reconnects automatically after the browser bridge disconnects", as
   assert.equal(await page.locator("#runState").getAttribute("data-state"), "ready");
 
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
-  assert.equal(await page.locator("#runStateLabel").innerText(), "ネットワークを待っています");
+  assert.equal(await page.locator("#runStateLabel").innerText(), "正在等待网络");
   assert.equal(await page.locator("#send").isDisabled(), true);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await page.waitForFunction(
@@ -272,7 +339,7 @@ test("background thread polling stays quiet after browser bridge disconnects", a
   await page.evaluate(() => loadThreads({ background: true }));
 
   const logText = await page.locator("#log").innerText();
-  assert.doesNotMatch(logText, /thread一覧を読めませんでした: Failed to fetch/);
+  assert.doesNotMatch(logText, /无法读取对话列表： Failed to fetch/);
   assert.equal(await page.locator("#runState").getAttribute("data-state"), "reconnecting");
 });
 
@@ -333,7 +400,7 @@ test("mobile settings opened from the thread drawer stays visible", async (t) =>
 
   assert.equal(await page.locator("body").evaluate((node) => node.classList.contains("show-panel")), true);
   await page.waitForSelector(".artifact-panel:not([aria-hidden='true'])");
-  const darkTheme = page.getByRole("button", { name: /Codex ダーク/ });
+  const darkTheme = page.getByRole("button", { name: /Codex 深色/ });
   await darkTheme.waitFor();
   await darkTheme.click();
   assert.equal(await page.locator("body").evaluate((node) => node.classList.contains("show-panel")), true);
@@ -556,7 +623,7 @@ test("slash skill menu retries after the first skills request fails", async (t) 
   await page.waitForSelector("#send:not([disabled])");
 
   await page.fill("#prompt", "/bro");
-  await page.getByText("スキルを読めませんでした: skills temporarily unavailable").waitFor();
+  await page.getByText("无法读取技能： skills temporarily unavailable").waitFor();
 
   await page.fill("#prompt", "retry /bro");
   await page.waitForSelector("#slashSkillMenu:not(.hidden)");
@@ -663,10 +730,10 @@ test("plugin panel empty state explains when no plugins are installed", async (t
   await page.goto(`${server.origin}/?token=${token}`, { waitUntil: "networkidle" });
 
   await page.click("#pluginsButton");
-  await page.getByText("導入済み/有効なプラグインはありません").waitFor();
+  await page.getByText("导入且启用的插件为空").waitFor();
 
   const panelText = await page.locator("#artifactList").innerText();
-  assert.match(panelText, /導入済み\/有効なプラグインはありません/);
+  assert.match(panelText, /导入且启用的插件为空/);
   assert.doesNotMatch(panelText, /Uninstalled Plugin/);
 });
 
@@ -724,7 +791,7 @@ test("thread switching keeps a transition entry until target history is ready", 
   await page.waitForTimeout(60);
 
   let logText = await page.locator("#log").innerText();
-  assert.match(logText, /thread履歴を読み込み中/);
+  assert.match(logText, /正在读取对话历史/);
   assert.doesNotMatch(logText, /current thread answer/);
   assert.doesNotMatch(logText, /target snapshot answer|target ready answer/);
 
